@@ -9,4 +9,32 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+```{r , load packages, include=FALSE}
+library(dplyr)
+library(lubridate)
+library(pander)
+library(ggplot2)
+library(tidyr)
+library(readr)
+library(stringr)
+library(caret)
+```
+
+
+```{r,read in the datasets, include=FALSE}
+pml_testing= read_csv("pml-testing.csv")
+
+pml_training= read_csv("pml-training.csv")
+```
+
+```{r partition the training data into validation and training set, include=YES}
+intrain= createDataPartition(y=pml_training$classe,p=0.75,list = F)
+
+pml_trainingset=pml_training[intrain,]
+
+pml_validating=pml_training[-intrain,]
+```
+```{r, training the models using random forest}
+modelFR= train(classe ~ data=pml_trainingset,method= 'rf')
+```
 
