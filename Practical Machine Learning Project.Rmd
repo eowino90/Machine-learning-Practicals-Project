@@ -5,36 +5,138 @@ date: "8 December 2018"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
-```{r , load packages, include=FALSE}
-library(dplyr)
-library(lubridate)
-library(pander)
-library(ggplot2)
-library(tidyr)
-library(readr)
-library(stringr)
+#load the necessary packages for the work
+```{r,include=T,echo=T}
+rm(list=ls())                # clean working space
+library(knitr)
+library(randomForest)
+library(corrplot)
+library(rattle)
+library(rpart)
 library(caret)
+library(rpart.plot)
+library(readr)
+
+```
+#We read the data from the url then partition the training daset into two. 75% will be used for training and 25% will be used for validating. The provided test dataset will be used only in testing the final model.
+
+```{r,read in dataset,include=T,echo=T}
+#set working seed
+set.seed(12122018)
+# read data from url
+training <- read_csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"))
+testing  <- read_csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"))
+
+#Partition the dataset into training and validation set
+inTrain  <- createDataPartition(training$classe, p=0.75, list=FALSE)
+TrainSet <- training[inTrain, ]
+validateset  <- training[-inTrain, ]
 ```
 
+#The datasets has lots of missing values. We shall drop the variables which almost everything is missing from it. ie nearly zero variance
 
-```{r,read in the datasets, include=FALSE}
-pml_testing= read_csv("pml-testing.csv")
+```{r,datacleaning,include=T,echo=T}
+# remove variables with Nearly Zero Variance
+NZV <- nearZeroVar(TrainSet)
+TrainSet <- TrainSet[, -NZV]
+validateset  <- validateset[, -NZV]
 
-pml_training= read_csv("pml-training.csv")
+# remove variables that are mostly NA
+mostlyna    <- sapply(TrainSet, function(x) mean(is.na(x))) > 0.95
+TrainSet <- TrainSet[, mostlyna==FALSE]
+validateset  <- validateset[, mostlyna==FALSE]
+#remove unnecassary variables
+TrainSet <- TrainSet[, -(1:5)]
+validateset  <- validateset[, -(1:5)]
+#drop all na rows still remaining
+TrainSet= subset(TrainSet,!is.na(TrainSet$magnet_forearm_y))
+TrainSet= subset(TrainSet,!is.na(TrainSet$magnet_forearm_z))
+dim(TrainSet)
+dim(validateset)
+```
+#We check how the variables are correlated before proceeding
+```{r,check correlation,include=T,echo=T}
+
+corMatrix <- cor(TrainSet[, -54])
+
+corrplot(corMatrix, order = "FPC", method = "color", type = "lower", 
+         tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+```
+#Building prediction model
+```{r,prediction model,include=T,echo=T}
+set.seed(12122018)
+controlRF <- trainControl(method="cv", number=3, verboseIter=FALSE)
+modFitRandForest <- train(classe ~ ., data=TrainSet, method="rf",
+                          trControl=controlRF)
+modFitRandForest$finalModel
 ```
 
-```{r partition the training data into validation and training set, include=YES}
-intrain= createDataPartition(y=pml_training$classe,p=0.75,list = F)
-
-pml_trainingset=pml_training[intrain,]
-
-pml_validating=pml_training[-intrain,]
+```{r,predict using validateset,include=T,echo=T}
+# prediction on validateset dataset
+predictRandForest <- predict(modFitRandForest, newdata=validateset)
+confMatRandForest <- confusionMatrix(table(predictRandForest, validateset$classe))
+confMatRandForest
 ```
-```{r, training the models using random forest}
-modelFR= train(classe ~ data=pml_trainingset,method= 'rf')
+
+```{r,plot randforest confusion matrix,include=T,echo=T}
+# plot matrix results
+plot(confMatRandForest$table, col = confMatRandForest$byClass, 
+     main = paste("Random Forest - Accuracy =",
+                  round(confMatRandForest$overall['Accuracy'], 4)))
+```
+#we repeat the modelling but use Generalized Boosted Model
+```{r ,Generalized Boosted Model,include=T,echo=T}
+
+set.seed(12122018)
+control_boost <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+modFit_boost  <- train(classe ~ ., data=TrainSet, method = "gbm",
+                    trControl = control_boost, verbose = FALSE)
+modFit_boost$finalModel
+```
+
+```{r,predicting with BOOST,include=T,echo=T}
+#prediction using boost
+predict_boost <- predict(modFit_boost, newdata=validateset)
+confMat_boost <- confusionMatrix(table(predict_boost, validateset$classe))
+confMat_boost
+```
+
+```{r,plot matrix results,include=T,echo=T}
+# plot matrix results
+plot(confMat_boost$table, col = confMat_boost$byClass, 
+     main = paste("Boosting - Accuracy =", round(confMat_boost$overall['Accuracy'], 4)))
+```
+
+#Using Tree Method
+```{r,model fitting,include=T,echo=T}
+# model fitting with tree
+set.seed(12122018)
+modFit_using_Tree <- rpart(classe ~ ., data=TrainSet, method="class")
+fancyRpartPlot(modFit_using_Tree)
+```
+```{r,predict using validating dataset}
+# prediction on validate dataset
+predictusingtree <- predict(modFit_using_Tree, newdata=validateset, type="class")
+confMat_Tree <- confusionMatrix(table(predictusingtree, validateset$classe))
+confMat_Tree
+```
+
+```{r,plot the confusion matrix,include=T,echo=T}
+
+plot(confMat_Tree$table, col = confMat_Tree$byClass, 
+     main = paste("Decision Tree - Accuracy =",
+                  round(confMat_Tree$overall['Accuracy'], 4)))
+```
+##FINAL MODEL 
+#The accuracy of the MODELS ABOVE ARE AS BELOW:
+#Random Forest : 0.9963
+#Decision Tree : 0.7368
+#GBM : 0.9839
+
+#We therefore use random forest in predicting on the testing datasets. This is because of its high accuracy rate.
+
+```{r,predicting on the testing dataset,include=T,echo=T}
+predict_TEST <- predict(modFitRandForest, newdata=testing)
+predict_TEST
 ```
 
